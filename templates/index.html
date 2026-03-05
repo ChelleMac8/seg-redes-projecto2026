@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="card">
+  <h1>Menu Principal</h1>
+  <p>Protótipo de troca de mensagens (Texto/Imagem) com criptografia.</p>
+
+  <div class="grid">
+    <a class="btn" href="{{ url_for('send') }}">📨 Enviar mensagem</a>
+    <a class="btn secondary" href="{{ url_for('inbox') }}">📥 Caixa de entrada</a>
+  </div>
+</section>
+{% endblock %}

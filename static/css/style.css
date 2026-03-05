@@ -1,0 +1,119 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, Arial, sans-serif;
+  background: #0b1220;
+  color: #e8eefc;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+
+.brand { font-weight: 700; }
+.nav a {
+  color: #cfe0ff;
+  text-decoration: none;
+  margin-left: 12px;
+  opacity: .9;
+}
+.nav a:hover { opacity: 1; }
+
+.container {
+  max-width: 860px;
+  margin: 26px auto;
+  padding: 0 16px;
+}
+
+.card {
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.btn {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(120,160,255,.18);
+  color: #e8eefc;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.05); }
+
+.btn.secondary { background: rgba(120,255,200,.12); }
+.btn.ghost { background: transparent; }
+.btn.small { padding: 8px 10px; border-radius: 10px; }
+
+.form { display: grid; gap: 10px; margin-top: 10px; }
+input, textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.25);
+  color: #e8eefc;
+}
+.actions { display: flex; gap: 10px; margin-top: 6px; }
+
+.list { display: grid; gap: 10px; margin-top: 12px; }
+.msg {
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(0,0,0,.18);
+}
+.msg-head {
+  display: flex;
+  justify-content: space-between;
+  opacity: .95;
+}
+.date { opacity: .7; font-size: .9rem; }
+.msg-body { margin: 8px 0; opacity: .95; }
+.msg-foot { display: flex; justify-content: space-between; align-items: center; }
+.badge {
+  border: 1px solid rgba(255,255,255,.14);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .85rem;
+  opacity: .9;
+}
+
+.footer {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  padding: 10px 16px;
+  pointer-events: none;
+}
+.tag {
+  pointer-events: none;
+  position: absolute;
+  right: 16px;
+  bottom: 10px;
+  opacity: .75;
+  font-size: .9rem;
+}
+.hint { opacity: .7; margin-top: 12px; }
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title if title else "Secure Chat" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🔐 Secure Chat</div>
+    <nav class="nav">
+      <a href="{{ url_for('index') }}">Menu</a>
+      <a href="{{ url_for('send') }}">Enviar</a>
+      <a href="{{ url_for('inbox') }}">Inbox</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div class="tag">@2026_Apelido1_Apelido2_Apelido3#</div>
+  </footer>
+</body>
+</html>

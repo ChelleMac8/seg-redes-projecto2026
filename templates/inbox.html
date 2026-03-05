@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="card">
+  <h1>Caixa de Entrada</h1>
+
+  <div class="list">
+    {% for m in messages %}
+      <div class="msg">
+        <div class="msg-head">
+          <strong>De:</strong> {{ m.from }}
+          <span class="date">{{ m.date }}</span>
+        </div>
+        <div class="msg-body">{{ m.text }}</div>
+        <div class="msg-foot">
+          {% if m.has_image %}
+            <span class="badge">📷 imagem</span>
+          {% endif %}
+          <button class="btn small" type="button">Ver</button>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <a class="btn ghost" href="{{ url_for('index') }}">Voltar</a>
+</section>
+{% endblock %}
