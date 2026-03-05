@@ -13,15 +13,27 @@
       <a href="{{ url_for('index') }}">Menu</a>
       <a href="{{ url_for('send') }}">Enviar</a>
       <a href="{{ url_for('inbox') }}">Inbox</a>
+      <a href="{{ url_for('logout') }}">Sair</a>
     </nav>
   </header>
 
   <main class="container">
+
+    {% with msgs = get_flashed_messages() %}
+      {% if msgs %}
+        <div class="card" style="margin-bottom:12px; background: rgba(0,0,0,.20);">
+          {% for m in msgs %}
+            <div style="padding:6px 0; opacity:.9;">{{ m }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
     {% block content %}{% endblock %}
   </main>
 
   <footer class="footer">
-    <div class="tag">@2026_Apelido1_Apelido2_Apelido3#</div>
+    @2026_Matsinhe_Fumo_Macamo
   </footer>
 </body>
 </html>

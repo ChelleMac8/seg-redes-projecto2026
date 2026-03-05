@@ -3,10 +3,13 @@
 <section class="card">
   <h1>Enviar mensagem</h1>
 
-  <form class="form" method="post" enctype="multipart/form-data" action="#">
-    <label>Destinatário (apelido/ID)</label>
-    <input type="text" placeholder="ex: Estudante2" required>
-
+<label>Destinatário</label>
+<select name="to" required>
+  <option value="" disabled selected>Escolha o destinatário...</option>
+  {% for r in recipients %}
+    <option value="{{ r['username'] }}">{{ r['username'] }}</option>
+  {% endfor %}
+</select>
     <label>Mensagem</label>
     <textarea rows="5" placeholder="Escreva a sua mensagem..." required></textarea>
 
@@ -20,7 +23,7 @@
   </form>
 
   <p class="hint">
-    (Fase 2) Aqui vamos aplicar: hash + assinatura + cifragem estilo PGP antes de “enviar”.
+     hash + assinatura + cifragem estilo PGP antes de “enviar”.
   </p>
 </section>
 {% endblock %}
