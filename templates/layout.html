@@ -3,10 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ title if title else "Secure Chat" }}</title>
+<title>{% block title %}Chat Seguro{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
+
+  {% if request.endpoint not in ['login', 'register'] %}
   <header class="topbar">
     <div class="brand">🔐 Secure Chat</div>
     <nav class="nav">
@@ -16,14 +19,15 @@
       <a href="{{ url_for('logout') }}">Sair</a>
     </nav>
   </header>
+  {% endif %}
 
-  <main class="container">
+  <main class="container {% block main_class %}{% endblock %}">
 
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="card" style="margin-bottom:12px; background: rgba(0,0,0,.20);">
+        <div class="flash-box">
           {% for m in msgs %}
-            <div style="padding:6px 0; opacity:.9;">{{ m }}</div>
+            <div class="flash-msg">{{ m }}</div>
           {% endfor %}
         </div>
       {% endif %}
@@ -32,8 +36,11 @@
     {% block content %}{% endblock %}
   </main>
 
+  {% if request.endpoint not in ['login', 'register'] %}
   <footer class="footer">
     @2026_Matsinhe_Fumo_Macamo
   </footer>
+  {% endif %}
+
 </body>
 </html>
