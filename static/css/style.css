@@ -140,8 +140,11 @@
   margin-top: 20px;
   padding: 10px;
 }
-
+.actions {
+  margin-top: 10px;
+}
 .btn-secondary:hover {
   text-decoration: none;
   color: #c5c5c5;
 }
+/* css do register e do login sao iguaizinhos */
