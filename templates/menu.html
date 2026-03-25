@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+{% block title %}Menu{% endblock %}
+
+{% block content %}
+<section class="menu-container">
+
+  <div class="menu-header">
+    <h1>Olá, {{ user }} 👋</h1>
+    <p>Bem-vinda ao Chat Seguro</p>
+  </div>
+
+  <div class="menu-grid">
+
+    <!-- INBOX -->
+   <a href="{{ url_for('profile') }}" class="menu-card">
+  <h2>👤 Perfil</h2>
+  <p>Ver e editar informações</p>
+</a>
+
+<a href="{{ url_for('settings') }}" class="menu-card">
+  <h2>⚙️ Definições</h2>
+  <p>Configurações do sistema</p>
+</a>
+
+    <!-- DEFINIÇÕES -->
+    <a href="#" class="menu-card">
+      <h2>⚙️ Definições</h2>
+      <p>Configurações do sistema</p>
+    </a>
+
+    <!-- SAIR -->
+    <a href="{{ url_for('logout') }}" class="menu-card logout">
+      <h2>🚪 Sair</h2>
+      <p>Terminar sessão</p>
+    </a>
+
+  </div>
+
+  <footer class="menu-footer">
+    @2026_Matsinhe_Fumo_Macamo#
+  </footer>
+
+</section>
+{% endblock %}
