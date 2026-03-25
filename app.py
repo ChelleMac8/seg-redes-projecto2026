@@ -172,50 +172,175 @@ def inbox():
         return redirect(url_for("login"))
 
     current_user_id = session["user_id"]
+    contact_query = request.args.get("contact_query", "").strip()
+    conversation_query = request.args.get("conversation_query", "").strip()
 
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    c.id AS conversation_id,
-                    u.id AS other_user_id,
-                    u.username AS other_username,
+            # Conversas
+            if conversation_query:
+                cursor.execute(
+                    """
+                    SELECT
+                        c.id AS conversation_id,
+                        u.id AS other_user_id,
+                        u.username AS other_username,
+                        (
+                            SELECT m.message_text
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                            ORDER BY m.created_at DESC, m.id DESC
+                            LIMIT 1
+                        ) AS last_message,
+                        (
+                            SELECT m.created_at
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                            ORDER BY m.created_at DESC, m.id DESC
+                            LIMIT 1
+                        ) AS last_message_time
+                    FROM conversations c
+                    JOIN users u
+                        ON u.id = CASE
+                            WHEN c.user1_id = %s THEN c.user2_id
+                            ELSE c.user1_id
+                        END
+                    WHERE (c.user1_id = %s OR c.user2_id = %s)
+                      AND (
+                            u.username LIKE %s
+                            OR EXISTS (
+                                SELECT 1
+                                FROM messages m2
+                                WHERE m2.conversation_id = c.id
+                                  AND m2.message_text LIKE %s
+                            )
+                      )
+                    ORDER BY last_message_time DESC, c.created_at DESC
+                    """,
                     (
-                        SELECT m.message_text
-                        FROM messages m
-                        WHERE m.conversation_id = c.id
-                        ORDER BY m.created_at DESC, m.id DESC
-                        LIMIT 1
-                    ) AS last_message,
-                    (
-                        SELECT m.created_at
-                        FROM messages m
-                        WHERE m.conversation_id = c.id
-                        ORDER BY m.created_at DESC, m.id DESC
-                        LIMIT 1
-                    ) AS last_message_time
-                FROM conversations c
-                JOIN users u
-                    ON u.id = CASE
-                        WHEN c.user1_id = %s THEN c.user2_id
-                        ELSE c.user1_id
-                    END
-                WHERE c.user1_id = %s OR c.user2_id = %s
-                ORDER BY last_message_time DESC, c.created_at DESC
-                """,
-                (current_user_id, current_user_id, current_user_id)
-            )
+                        current_user_id,
+                        current_user_id,
+                        current_user_id,
+                        f"%{conversation_query}%",
+                        f"%{conversation_query}%"
+                    )
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        c.id AS conversation_id,
+                        u.id AS other_user_id,
+                        u.username AS other_username,
+                        (
+                            SELECT m.message_text
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                            ORDER BY m.created_at DESC, m.id DESC
+                            LIMIT 1
+                        ) AS last_message,
+                        (
+                            SELECT m.created_at
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                            ORDER BY m.created_at DESC, m.id DESC
+                            LIMIT 1
+                        ) AS last_message_time
+                    FROM conversations c
+                    JOIN users u
+                        ON u.id = CASE
+                            WHEN c.user1_id = %s THEN c.user2_id
+                            ELSE c.user1_id
+                        END
+                    WHERE c.user1_id = %s OR c.user2_id = %s
+                    ORDER BY last_message_time DESC, c.created_at DESC
+                    """,
+                    (current_user_id, current_user_id, current_user_id)
+                )
+
             conversations = cursor.fetchall()
+
+            # Utilizadores = "contactos"
+            if contact_query:
+                cursor.execute(
+                    """
+                    SELECT id, username
+                    FROM users
+                    WHERE id != %s
+                      AND username LIKE %s
+                    ORDER BY username ASC
+                    """,
+                    (current_user_id, f"%{contact_query}%")
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, username
+                    FROM users
+                    WHERE id != %s
+                    ORDER BY username ASC
+                    """,
+                    (current_user_id,)
+                )
+
+            users = cursor.fetchall()
+
     finally:
         connection.close()
 
     return render_template(
         "inbox.html",
         user=session["username"],
-        conversations=conversations
+        conversations=conversations,
+        users=users,
+        has_conversations=len(conversations) > 0,
+        contact_query=contact_query,
+        conversation_query=conversation_query
     )
+
+
+@app.route("/start_chat/<int:other_user_id>")
+def start_chat(other_user_id):
+    if not require_login():
+        return redirect(url_for("login"))
+
+    current_user_id = session["user_id"]
+
+    if other_user_id == current_user_id:
+        flash("Não podes criar conversa contigo mesma.")
+        return redirect(url_for("inbox"))
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id FROM conversations
+                WHERE (user1_id = %s AND user2_id = %s)
+                   OR (user1_id = %s AND user2_id = %s)
+                """,
+                (current_user_id, other_user_id, other_user_id, current_user_id)
+            )
+            existing_conversation = cursor.fetchone()
+
+            if existing_conversation:
+                return redirect(url_for("chat", conversation_id=existing_conversation["id"]))
+
+            cursor.execute(
+                """
+                INSERT INTO conversations (user1_id, user2_id, created_at)
+                VALUES (%s, %s, %s)
+                """,
+                (current_user_id, other_user_id, datetime.now())
+            )
+            conversation_id = cursor.lastrowid
+
+        connection.commit()
+        flash("Nova conversa criada com sucesso!")
+        return redirect(url_for("chat", conversation_id=conversation_id))
+    finally:
+        connection.close()
 
 
 @app.route("/new_chat", methods=["GET", "POST"])
@@ -361,7 +486,21 @@ def chat(conversation_id):
                 """
                 SELECT
                     c.id AS conversation_id,
-                    u.username AS other_username
+                    u.username AS other_username,
+                    (
+                        SELECT m.message_text
+                        FROM messages m
+                        WHERE m.conversation_id = c.id
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1
+                    ) AS last_message,
+                    (
+                        SELECT m.created_at
+                        FROM messages m
+                        WHERE m.conversation_id = c.id
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1
+                    ) AS last_message_time
                 FROM conversations c
                 JOIN users u
                     ON u.id = CASE
@@ -369,7 +508,7 @@ def chat(conversation_id):
                         ELSE c.user1_id
                     END
                 WHERE c.user1_id = %s OR c.user2_id = %s
-                ORDER BY c.created_at DESC
+                ORDER BY last_message_time DESC, c.created_at DESC
                 """,
                 (current_user_id, current_user_id, current_user_id)
             )

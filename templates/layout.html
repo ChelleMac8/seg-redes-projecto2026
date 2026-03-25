@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>{% block title %}Chat Seguro{% endblock %}</title>
+  <title>{% block title %}Chat Seguro{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
-  {% if request.endpoint not in ['login', 'register'] %}
+  {% set no_topbar_pages = ['login', 'register', 'inbox', 'chat'] %}
+
+  {% if request.endpoint not in no_topbar_pages %}
   <header class="topbar">
     <div class="brand">🔐 Secure Chat</div>
     <nav class="nav">
@@ -21,22 +23,24 @@
   </header>
   {% endif %}
 
-  <main class="container {% block main_class %}{% endblock %}">
+  <main class="container {% block main_class %}{% endblock %} {% if request.endpoint in ['inbox', 'chat'] %}full-chat-layout{% endif %}">
 
-    {% with msgs = get_flashed_messages() %}
-      {% if msgs %}
-        <div class="flash-box">
-          {% for m in msgs %}
-            <div class="flash-msg">{{ m }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
+    {% if request.endpoint not in ['inbox', 'chat'] %}
+      {% with msgs = get_flashed_messages() %}
+        {% if msgs %}
+          <div class="flash-box">
+            {% for m in msgs %}
+              <div class="flash-msg">{{ m }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+    {% endif %}
 
     {% block content %}{% endblock %}
   </main>
 
-  {% if request.endpoint not in ['login', 'register'] %}
+  {% if request.endpoint not in no_topbar_pages %}
   <footer class="footer">
     @2026_Matsinhe_Fumo_Macamo
   </footer>

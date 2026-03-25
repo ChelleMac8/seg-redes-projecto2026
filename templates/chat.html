@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}Nova conversa{% endblock %}
+{% block body_class %}login-page{% endblock %}
+{% block main_class %}login-main{% endblock %}
+
+{% block content %}
+<section class="newchat-container">
+  <h1>Nova conversa</h1>
+  <p>Escolhe com quem queres conversar.</p>
+
+  <form class="newchat-form" method="post">
+    <div>
+      <label>Utilizador</label>
+      <select name="other_user_id" required>
+        <option value="" disabled selected>Escolha um utilizador...</option>
+        {% for u in users %}
+          <option value="{{ u.id }}">{{ u.username }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="newchat-actions">
+      <button class="btn" type="submit">Criar conversa</button>
+      <a class="btn-ghost" href="{{ url_for('inbox') }}">Voltar</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
