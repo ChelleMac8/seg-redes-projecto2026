@@ -11,17 +11,6 @@
 
   {% set no_topbar_pages = ['login', 'register', 'inbox', 'chat'] %}
 
-  {% if request.endpoint not in no_topbar_pages %}
-  <header class="topbar">
-    <div class="brand">🔐 Secure Chat</div>
-    <nav class="nav">
-      <a href="{{ url_for('index') }}">Menu</a>
-      <a href="{{ url_for('send') }}">Enviar</a>
-      <a href="{{ url_for('inbox') }}">Inbox</a>
-      <a href="{{ url_for('logout') }}">Sair</a>
-    </nav>
-  </header>
-  {% endif %}
 
   <main class="container {% block main_class %}{% endblock %} {% if request.endpoint in ['inbox', 'chat'] %}full-chat-layout{% endif %}">
 

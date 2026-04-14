@@ -1,10 +1,12 @@
-import os
 import hashlib
+import os
 import secrets
 from datetime import datetime
 
 import pymysql
 from flask import Flask, render_template, request, redirect, url_for, session, flash
+from werkzeug.utils import secure_filename
+
 from config import Config
 
 app = Flask(__name__)
@@ -12,6 +14,24 @@ app.config.from_object(Config)
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
+
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp3", "wav", "ogg", "m4a"}
+
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def get_file_type(filename):
+    ext = filename.rsplit(".", 1)[1].lower()
+    if ext in {"png", "jpg", "jpeg", "gif", "webp"}:
+        return "image"
+    if ext in {"mp3", "wav", "ogg", "m4a"}:
+        return "audio"
+    return None
 
 
 def get_db_connection():
@@ -58,11 +78,123 @@ def get_current_user():
         connection.close()
 
 
+def get_chat_list(current_user_id):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    u.id,
+                    u.username,
+                    u.email,
+                    (
+                        SELECT
+                            CASE
+                                WHEN m.file_type = 'image' THEN 'Imagem'
+                                WHEN m.file_type = 'audio' THEN 'Áudio'
+                                ELSE m.message
+                            END
+                        FROM messages m
+                        WHERE
+                            (m.sender_id = %s AND m.receiver_id = u.id)
+                            OR
+                            (m.sender_id = u.id AND m.receiver_id = %s)
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1
+                    ) AS last_message,
+                    (
+                        SELECT m.created_at
+                        FROM messages m
+                        WHERE
+                            (m.sender_id = %s AND m.receiver_id = u.id)
+                            OR
+                            (m.sender_id = u.id AND m.receiver_id = %s)
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1
+                    ) AS last_message_time
+                FROM users u
+                WHERE u.id != %s
+                ORDER BY
+                    CASE WHEN last_message_time IS NULL THEN 1 ELSE 0 END,
+                    last_message_time DESC,
+                    u.username ASC
+                """,
+                (
+                    current_user_id, current_user_id,
+                    current_user_id, current_user_id,
+                    current_user_id
+                )
+            )
+            rows = cursor.fetchall()
+
+            conversations = []
+            for row in rows:
+                conversations.append({
+                    "conversation_id": row["id"],
+                    "user_id": row["id"],
+                    "other_user_id": row["id"],
+                    "other_username": row["username"],
+                    "other_email": row["email"],
+                    "last_message": row["last_message"],
+                    "last_message_time": row["last_message_time"]
+                })
+
+            return conversations
+    finally:
+        connection.close()
+
+
 @app.route("/")
 def index():
     if not require_login():
         return redirect(url_for("login"))
-    return redirect(url_for("inbox"))
+    return redirect(url_for("menu"))
+
+
+@app.route("/menu")
+def menu():
+    if not require_login():
+        return redirect(url_for("login"))
+    return render_template("menu.html", user=session["username"])
+
+
+@app.route("/perfil")
+def perfil():
+    if not require_login():
+        return redirect(url_for("login"))
+
+    current_user = get_current_user()
+    return render_template(
+        "perfil.html",
+        user=session["username"],
+        current_user=current_user
+    )
+
+
+# Alias antigo: /profile continua a funcionar
+@app.route("/profile", endpoint="profile")
+def profile_alias():
+    return redirect(url_for("perfil"))
+
+
+@app.route("/definicoes")
+def definicoes():
+    if not require_login():
+        return redirect(url_for("login"))
+
+    current_user = get_current_user()
+    return render_template(
+        "definicoes.html",
+        user=session["username"],
+        current_user=current_user
+    )
+
+
+# Alias antigo: /settings continua a funcionar
+@app.route("/settings", endpoint="settings")
+def settings_alias():
+    return redirect(url_for("definicoes"))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -81,8 +213,8 @@ def register():
             flash("O email é obrigatório.")
             return redirect(url_for("register"))
 
-        if len(password) < 6:
-            flash("A senha deve ter pelo menos 6 caracteres.")
+        if len(password) < 4:
+            flash("A senha deve ter pelo menos 4 caracteres.")
             return redirect(url_for("register"))
 
         if password != confirm:
@@ -115,7 +247,7 @@ def register():
         finally:
             connection.close()
 
-        flash("Conta criada com sucesso! Agora faz login.")
+        flash("Conta criada com sucesso! Faça o login.")
         return redirect(url_for("login"))
 
     return render_template("register.html")
@@ -123,6 +255,9 @@ def register():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if require_login():
+        return redirect(url_for("menu"))
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -154,7 +289,7 @@ def login():
         session["username"] = user["username"]
 
         flash("Login feito com sucesso!")
-        return redirect(url_for("inbox"))
+        return redirect(url_for("menu"))
 
     return render_template("login.html")
 
@@ -172,131 +307,16 @@ def inbox():
         return redirect(url_for("login"))
 
     current_user_id = session["user_id"]
-    contact_query = request.args.get("contact_query", "").strip()
-    conversation_query = request.args.get("conversation_query", "").strip()
-
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            # Conversas
-            if conversation_query:
-                cursor.execute(
-                    """
-                    SELECT
-                        c.id AS conversation_id,
-                        u.id AS other_user_id,
-                        u.username AS other_username,
-                        (
-                            SELECT m.message_text
-                            FROM messages m
-                            WHERE m.conversation_id = c.id
-                            ORDER BY m.created_at DESC, m.id DESC
-                            LIMIT 1
-                        ) AS last_message,
-                        (
-                            SELECT m.created_at
-                            FROM messages m
-                            WHERE m.conversation_id = c.id
-                            ORDER BY m.created_at DESC, m.id DESC
-                            LIMIT 1
-                        ) AS last_message_time
-                    FROM conversations c
-                    JOIN users u
-                        ON u.id = CASE
-                            WHEN c.user1_id = %s THEN c.user2_id
-                            ELSE c.user1_id
-                        END
-                    WHERE (c.user1_id = %s OR c.user2_id = %s)
-                      AND (
-                            u.username LIKE %s
-                            OR EXISTS (
-                                SELECT 1
-                                FROM messages m2
-                                WHERE m2.conversation_id = c.id
-                                  AND m2.message_text LIKE %s
-                            )
-                      )
-                    ORDER BY last_message_time DESC, c.created_at DESC
-                    """,
-                    (
-                        current_user_id,
-                        current_user_id,
-                        current_user_id,
-                        f"%{conversation_query}%",
-                        f"%{conversation_query}%"
-                    )
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT
-                        c.id AS conversation_id,
-                        u.id AS other_user_id,
-                        u.username AS other_username,
-                        (
-                            SELECT m.message_text
-                            FROM messages m
-                            WHERE m.conversation_id = c.id
-                            ORDER BY m.created_at DESC, m.id DESC
-                            LIMIT 1
-                        ) AS last_message,
-                        (
-                            SELECT m.created_at
-                            FROM messages m
-                            WHERE m.conversation_id = c.id
-                            ORDER BY m.created_at DESC, m.id DESC
-                            LIMIT 1
-                        ) AS last_message_time
-                    FROM conversations c
-                    JOIN users u
-                        ON u.id = CASE
-                            WHEN c.user1_id = %s THEN c.user2_id
-                            ELSE c.user1_id
-                        END
-                    WHERE c.user1_id = %s OR c.user2_id = %s
-                    ORDER BY last_message_time DESC, c.created_at DESC
-                    """,
-                    (current_user_id, current_user_id, current_user_id)
-                )
-
-            conversations = cursor.fetchall()
-
-            # Utilizadores = "contactos"
-            if contact_query:
-                cursor.execute(
-                    """
-                    SELECT id, username
-                    FROM users
-                    WHERE id != %s
-                      AND username LIKE %s
-                    ORDER BY username ASC
-                    """,
-                    (current_user_id, f"%{contact_query}%")
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT id, username
-                    FROM users
-                    WHERE id != %s
-                    ORDER BY username ASC
-                    """,
-                    (current_user_id,)
-                )
-
-            users = cursor.fetchall()
-
-    finally:
-        connection.close()
+    conversations = get_chat_list(current_user_id)
 
     return render_template(
         "inbox.html",
         user=session["username"],
         conversations=conversations,
-        users=users,
+        users=[],
         has_conversations=len(conversations) > 0,
-        contact_query=contact_query,
-        conversation_query=conversation_query
+        contact_query="",
+        conversation_query=""
     )
 
 
@@ -305,45 +325,14 @@ def start_chat(other_user_id):
     if not require_login():
         return redirect(url_for("login"))
 
-    current_user_id = session["user_id"]
-
-    if other_user_id == current_user_id:
+    if other_user_id == session["user_id"]:
         flash("Não podes criar conversa contigo mesma.")
         return redirect(url_for("inbox"))
 
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id FROM conversations
-                WHERE (user1_id = %s AND user2_id = %s)
-                   OR (user1_id = %s AND user2_id = %s)
-                """,
-                (current_user_id, other_user_id, other_user_id, current_user_id)
-            )
-            existing_conversation = cursor.fetchone()
-
-            if existing_conversation:
-                return redirect(url_for("chat", conversation_id=existing_conversation["id"]))
-
-            cursor.execute(
-                """
-                INSERT INTO conversations (user1_id, user2_id, created_at)
-                VALUES (%s, %s, %s)
-                """,
-                (current_user_id, other_user_id, datetime.now())
-            )
-            conversation_id = cursor.lastrowid
-
-        connection.commit()
-        flash("Nova conversa criada com sucesso!")
-        return redirect(url_for("chat", conversation_id=conversation_id))
-    finally:
-        connection.close()
+    return redirect(url_for("chat", user_id=other_user_id))
 
 
-@app.route("/new_chat", methods=["GET", "POST"])
+@app.route("/new_chat")
 def new_chat():
     if not require_login():
         return redirect(url_for("login"))
@@ -352,183 +341,152 @@ def new_chat():
 
     connection = get_db_connection()
     try:
-        if request.method == "POST":
-            other_user_id = request.form.get("other_user_id")
-
-            if not other_user_id:
-                flash("Escolhe um utilizador.")
-                return redirect(url_for("new_chat"))
-
-            other_user_id = int(other_user_id)
-
-            if other_user_id == current_user_id:
-                flash("Não podes criar conversa contigo mesma.")
-                return redirect(url_for("new_chat"))
-
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id FROM conversations
-                    WHERE (user1_id = %s AND user2_id = %s)
-                       OR (user1_id = %s AND user2_id = %s)
-                    """,
-                    (current_user_id, other_user_id, other_user_id, current_user_id)
-                )
-                existing_conversation = cursor.fetchone()
-
-                if existing_conversation:
-                    return redirect(
-                        url_for("chat", conversation_id=existing_conversation["id"])
-                    )
-
-                cursor.execute(
-                    """
-                    INSERT INTO conversations (user1_id, user2_id, created_at)
-                    VALUES (%s, %s, %s)
-                    """,
-                    (current_user_id, other_user_id, datetime.now())
-                )
-                conversation_id = cursor.lastrowid
-
-            connection.commit()
-            flash("Nova conversa criada com sucesso!")
-            return redirect(url_for("chat", conversation_id=conversation_id))
-
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, username
-                FROM users
-                WHERE id != %s
-                ORDER BY username ASC
-                """,
-                (current_user_id,)
-            )
-            users = cursor.fetchall()
-
-    finally:
-        connection.close()
-
-    return render_template("new_chat.html", users=users, user=session["username"])
-
-
-@app.route("/chat/<int:conversation_id>", methods=["GET", "POST"])
-def chat(conversation_id):
-    if not require_login():
-        return redirect(url_for("login"))
-
-    current_user_id = session["user_id"]
-
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT *
-                FROM conversations
-                WHERE id = %s
-                  AND (user1_id = %s OR user2_id = %s)
-                """,
-                (conversation_id, current_user_id, current_user_id)
-            )
-            conversation = cursor.fetchone()
-
-            if not conversation:
-                flash("Conversa não encontrada.")
-                return redirect(url_for("inbox"))
-
-            if request.method == "POST":
-                message_text = request.form.get("message", "").strip()
-
-                image = request.files.get("image")
-                image_path = None
-
-                if image and image.filename:
-                    ext = os.path.splitext(image.filename)[1].lower()
-                    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}{ext}"
-                    save_path = os.path.join(UPLOAD_FOLDER, filename)
-                    image.save(save_path)
-                    image_path = save_path.replace("\\", "/")
-
-                if not message_text and not image_path:
-                    flash("Escreve uma mensagem ou escolhe uma imagem.")
-                    return redirect(url_for("chat", conversation_id=conversation_id))
-
-                cursor.execute(
-                    """
-                    INSERT INTO messages (
-                        conversation_id,
-                        sender_id,
-                        message_text,
-                        image_path,
-                        created_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (conversation_id, current_user_id, message_text, image_path, datetime.now())
-                )
-                connection.commit()
-                return redirect(url_for("chat", conversation_id=conversation_id))
-
-            other_user_id = (
-                conversation["user2_id"]
-                if conversation["user1_id"] == current_user_id
-                else conversation["user1_id"]
-            )
-
-            cursor.execute(
-                "SELECT id, username FROM users WHERE id = %s",
-                (other_user_id,)
-            )
-            other_user = cursor.fetchone()
-
             cursor.execute(
                 """
                 SELECT
-                    c.id AS conversation_id,
-                    u.username AS other_username,
+                    u.id,
+                    u.username,
+                    u.email,
                     (
-                        SELECT m.message_text
+                        SELECT
+                            CASE
+                                WHEN m.file_type = 'image' THEN 'Imagem'
+                                WHEN m.file_type = 'audio' THEN 'Áudio'
+                                ELSE m.message
+                            END
                         FROM messages m
-                        WHERE m.conversation_id = c.id
+                        WHERE
+                            (m.sender_id = %s AND m.receiver_id = u.id)
+                            OR
+                            (m.sender_id = u.id AND m.receiver_id = %s)
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT 1
                     ) AS last_message,
                     (
                         SELECT m.created_at
                         FROM messages m
-                        WHERE m.conversation_id = c.id
+                        WHERE
+                            (m.sender_id = %s AND m.receiver_id = u.id)
+                            OR
+                            (m.sender_id = u.id AND m.receiver_id = %s)
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT 1
                     ) AS last_message_time
-                FROM conversations c
-                JOIN users u
-                    ON u.id = CASE
-                        WHEN c.user1_id = %s THEN c.user2_id
-                        ELSE c.user1_id
-                    END
-                WHERE c.user1_id = %s OR c.user2_id = %s
-                ORDER BY last_message_time DESC, c.created_at DESC
+                FROM users u
+                WHERE u.id != %s
+                ORDER BY
+                    CASE WHEN last_message_time IS NULL THEN 1 ELSE 0 END,
+                    last_message_time DESC,
+                    u.username ASC
                 """,
-                (current_user_id, current_user_id, current_user_id)
+                (
+                    current_user_id, current_user_id,
+                    current_user_id, current_user_id,
+                    current_user_id
+                )
             )
-            conversations = cursor.fetchall()
+            users = cursor.fetchall()
+    finally:
+        connection.close()
 
+    return render_template("new_chat.html", users=users, user=session["username"])
+
+
+@app.route("/chat/<int:user_id>", methods=["GET", "POST"])
+@app.route("/chat/conversation/<int:conversation_id>", methods=["GET", "POST"])
+def chat(user_id=None, conversation_id=None):
+    if not require_login():
+        return redirect(url_for("login"))
+
+    if user_id is None and conversation_id is not None:
+        user_id = conversation_id
+
+    current_user_id = session["user_id"]
+
+    if user_id == current_user_id:
+        flash("Não podes abrir conversa contigo mesma.")
+        return redirect(url_for("inbox"))
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, username, email FROM users WHERE id = %s",
+                (user_id,)
+            )
+            other_user = cursor.fetchone()
+
+            if not other_user:
+                flash("Utilizador não encontrado.")
+                return redirect(url_for("inbox"))
+
+            if request.method == "POST":
+                message_text = request.form.get("message", "").strip()
+                uploaded_file = request.files.get("file")
+
+                file_name = None
+                file_type = None
+
+                if uploaded_file and uploaded_file.filename:
+                    if not allowed_file(uploaded_file.filename):
+                        flash("Tipo de ficheiro não permitido.")
+                        return redirect(url_for("chat", user_id=user_id))
+
+                    original_name = secure_filename(uploaded_file.filename)
+                    ext = os.path.splitext(original_name)[1].lower()
+                    new_file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(6)}{ext}"
+
+                    save_path = os.path.join(app.config["UPLOAD_FOLDER"], new_file_name)
+                    uploaded_file.save(save_path)
+
+                    file_name = new_file_name
+                    file_type = get_file_type(original_name)
+
+                if not message_text and not file_name:
+                    flash("Escreve uma mensagem ou escolhe um ficheiro.")
+                    return redirect(url_for("chat", user_id=user_id))
+
+                cursor.execute(
+                    """
+                    INSERT INTO messages (sender_id, receiver_id, message, file_name, file_type, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        current_user_id,
+                        user_id,
+                        message_text if message_text else None,
+                        file_name,
+                        file_type,
+                        datetime.now()
+                    )
+                )
+                connection.commit()
+                return redirect(url_for("chat", user_id=user_id))
+
+        conversations = get_chat_list(current_user_id)
+
+        with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT
                     m.id,
                     m.sender_id,
-                    m.message_text,
-                    m.image_path,
+                    m.receiver_id,
+                    m.message,
+                    m.file_name,
+                    m.file_type,
                     m.created_at,
                     u.username AS sender_username
                 FROM messages m
                 JOIN users u ON u.id = m.sender_id
-                WHERE m.conversation_id = %s
+                WHERE
+                    (m.sender_id = %s AND m.receiver_id = %s)
+                    OR
+                    (m.sender_id = %s AND m.receiver_id = %s)
                 ORDER BY m.created_at ASC, m.id ASC
                 """,
-                (conversation_id,)
+                (current_user_id, user_id, user_id, current_user_id)
             )
             messages = cursor.fetchall()
 
@@ -542,7 +500,8 @@ def chat(conversation_id):
         other_user=other_user,
         conversations=conversations,
         messages=messages,
-        conversation_id=conversation_id
+        conversation_id=user_id,
+        user_id=user_id
     )
 
 

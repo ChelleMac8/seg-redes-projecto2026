@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="page-shell">
+    <div class="page-card">
+        <div class="page-top">
+            <a href="{{ url_for('menu') }}" class="page-back-btn">←</a>
+            <div>
+                <h1>Perfil</h1>
+                <p>Informações do utilizador</p>
+            </div>
+        </div>
+
+        <div class="profile-box">
+            <div class="profile-avatar">
+                {{ current_user.username[0]|upper }}
+            </div>
+
+            <div class="profile-info">
+                <div class="info-row">
+                    <span class="info-label">Username</span>
+                    <span class="info-value">{{ current_user.username }}</span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Email</span>
+                    <span class="info-value">{{ current_user.email }}</span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">ID do utilizador</span>
+                    <span class="info-value">{{ current_user.id }}</span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Conta criada</span>
+                    <span class="info-value">
+                        {% if current_user.created_at %}
+                            {{ current_user.created_at.strftime("%d/%m/%Y %H:%M") }}
+                        {% else %}
+                            Sem data disponível
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
