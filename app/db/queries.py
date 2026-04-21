@@ -3,7 +3,7 @@ from datetime import datetime
 from app.db.connection import get_db_connection
 from app.utils.user_utils import generate_user_hash
 from app.utils.hash_utils import generate_message_hash, generate_message_hash_sha3
-from app.services.crypto_utils import cifrar_mensagem
+from app.services.crypto_utils import cifrar_mensagem_longa
 from app.services.rsa_utils import cifrar_mensagem_longa
 
 from app.services.rsa_utils import (
@@ -18,7 +18,69 @@ from app.services.dh_utils import (
     calcular_segredo_partilhado,
     derivar_chave_sessao,
 )
+from app.db.connection import get_db_connection
+from app.services.pki_utils import gerar_certificado_ca
+from app.services.pki_utils import verificar_certificado_utilizador
 
+
+def user_certificate_is_valid(user_id):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT user_certificate FROM users WHERE id = %s", (user_id,))
+            user = cursor.fetchone()
+
+            cursor.execute("SELECT ca_certificate FROM ca_certificates LIMIT 1")
+            ca = cursor.fetchone()
+
+            if not user or not user.get("user_certificate"):
+                return False
+
+            if not ca or not ca.get("ca_certificate"):
+                return False
+
+            return verificar_certificado_utilizador(
+                user_certificate_pem=user["user_certificate"],
+                ca_certificate_pem=ca["ca_certificate"]
+            )
+    finally:
+        connection.close()
+
+def create_ca_if_not_exists():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM ca_certificates LIMIT 1")
+            existing = cursor.fetchone()
+
+            if existing:
+                return existing
+
+            ca_data = gerar_certificado_ca()
+
+            cursor.execute("""
+                INSERT INTO ca_certificates (
+                    ca_name,
+                    ca_private_key,
+                    ca_public_key,
+                    ca_certificate
+                )
+                VALUES (%s, %s, %s, %s)
+            """, (
+                "CA Raiz Secure Chat",
+                ca_data["private_key_pem"],
+                ca_data["public_key_pem"],
+                ca_data["certificate_pem"]
+            ))
+
+        connection.commit()
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM ca_certificates LIMIT 1")
+            return cursor.fetchone()
+
+    finally:
+        connection.close()
 
 def get_user_by_id(user_id):
     connection = get_db_connection()
@@ -68,6 +130,18 @@ def create_user(username, email, password_hash):
     private_pem = serializar_chave_privada(chave_privada)
     public_pem = serializar_chave_publica(chave_publica)
 
+    # garantir que a CA existe
+    ca = create_ca_if_not_exists()
+
+    # gerar certificado do utilizador assinado pela CA
+    from app.services.pki_utils import gerar_certificado_utilizador
+    user_certificate = gerar_certificado_utilizador(
+        username=username,
+        user_public_key_pem=public_pem,
+        ca_private_key_pem=ca["ca_private_key"],
+        ca_certificate_pem=ca["ca_certificate"]
+    )
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
@@ -80,9 +154,10 @@ def create_user(username, email, password_hash):
                     user_hash,
                     rsa_private_key,
                     rsa_public_key,
+                    user_certificate,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     username,
@@ -91,6 +166,7 @@ def create_user(username, email, password_hash):
                     generate_user_hash(),
                     private_pem,
                     public_pem,
+                    user_certificate,
                     datetime.now()
                 )
             )
@@ -279,6 +355,9 @@ def get_messages_between_users(current_user_id, other_user_id):
                     m.mensagem_cifrada,
                     m.chave_simetrica_cifrada,
                     m.signature,
+                    m.mensagem_cifrada_sender,
+                    m.chave_simetrica_cifrada_sender,
+                    m.signature_sender,
                     m.message_hash,
                     m.message_hash_sha3,
                     m.file_name,
@@ -298,58 +377,59 @@ def get_messages_between_users(current_user_id, other_user_id):
             return cursor.fetchall()
     finally:
         connection.close()
-
 def insert_message_with_file(sender_id, receiver_id, message_text, file_name, file_type):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            payload_receiver = None
+            payload_sender = None
+            message_hash = None
+            message_hash_sha3 = None
 
-            mensagem_cifrada = None
-            chave_simetrica_cifrada = None
-            signature = None
-
-            message_hash = generate_message_hash(message_text) if message_text else None
-            message_hash_sha3 = generate_message_hash_sha3(message_text) if message_text else None
-
-            # ================================
-            # NOVA CIFRAGEM (PGP STYLE)
-            # ================================
             if message_text:
+                message_hash = generate_message_hash(message_text)
+                message_hash_sha3 = generate_message_hash_sha3(message_text)
 
-                # 🔑 chave privada do remetente
                 cursor.execute(
-                    "SELECT rsa_private_key FROM users WHERE id = %s",
+                    "SELECT rsa_private_key, rsa_public_key FROM users WHERE id = %s",
                     (sender_id,)
                 )
                 sender = cursor.fetchone()
 
-                # 🔑 chave pública do destinatário
                 cursor.execute(
                     "SELECT rsa_public_key FROM users WHERE id = %s",
                     (receiver_id,)
                 )
                 receiver = cursor.fetchone()
 
-                if not sender or not sender.get("rsa_private_key"):
-                    raise ValueError("Chave privada do remetente não encontrada.")
+                if not sender or not sender.get("rsa_private_key") or not sender.get("rsa_public_key"):
+                    raise ValueError("Chaves RSA do remetente não encontradas.")
 
                 if not receiver or not receiver.get("rsa_public_key"):
                     raise ValueError("Chave pública do destinatário não encontrada.")
 
-                # 🔐 cifragem híbrida
-                payload = cifrar_mensagem_longa(
+                # cópia para o destinatário
+                payload_receiver = cifrar_mensagem_longa(
                     public_key_pem_destinatario=receiver["rsa_public_key"],
                     private_key_pem_remetente=sender["rsa_private_key"],
                     texto=message_text
                 )
 
-                mensagem_cifrada = payload["mensagem_cifrada"]
-                chave_simetrica_cifrada = payload["chave_simetrica_cifrada"]
-                signature = payload["assinatura"]
+                # cópia para o remetente
+                payload_sender = cifrar_mensagem_longa(
+                    public_key_pem_destinatario=sender["rsa_public_key"],
+                    private_key_pem_remetente=sender["rsa_private_key"],
+                    texto=message_text
+                )
 
-            # ================================
-            # GUARDAR NA BASE DE DADOS
-            # ================================
+            mensagem_cifrada = payload_receiver["mensagem_cifrada"] if payload_receiver else None
+            chave_simetrica_cifrada = payload_receiver["chave_simetrica_cifrada"] if payload_receiver else None
+            signature = payload_receiver["assinatura"] if payload_receiver else None
+
+            mensagem_cifrada_sender = payload_sender["mensagem_cifrada"] if payload_sender else None
+            chave_simetrica_cifrada_sender = payload_sender["chave_simetrica_cifrada"] if payload_sender else None
+            signature_sender = payload_sender["assinatura"] if payload_sender else None
+
             cursor.execute(
                 """
                 INSERT INTO messages
@@ -360,21 +440,27 @@ def insert_message_with_file(sender_id, receiver_id, message_text, file_name, fi
                     mensagem_cifrada,
                     chave_simetrica_cifrada,
                     signature,
+                    mensagem_cifrada_sender,
+                    chave_simetrica_cifrada_sender,
+                    signature_sender,
                     message_hash,
                     message_hash_sha3,
                     file_name,
                     file_type,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sender_id,
                     receiver_id,
-                    None,  # não guardar texto em claro
+                    None,
                     mensagem_cifrada,
                     chave_simetrica_cifrada,
                     signature,
+                    mensagem_cifrada_sender,
+                    chave_simetrica_cifrada_sender,
+                    signature_sender,
                     message_hash,
                     message_hash_sha3,
                     file_name,
@@ -387,7 +473,6 @@ def insert_message_with_file(sender_id, receiver_id, message_text, file_name, fi
 
     finally:
         connection.close()
-
 def get_secure_session(user1_id, user2_id):
     a, b = sorted([user1_id, user2_id])
 

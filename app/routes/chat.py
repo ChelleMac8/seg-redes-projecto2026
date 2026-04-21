@@ -78,7 +78,7 @@ def chat(user_hash):
         return redirect(url_for("chat.chat", user_hash=user_hash))
 
     messages = get_messages_between_users(current_user_id, other_user_id)
-    messages = attach_integrity_status(messages)
+    messages = attach_integrity_status(messages, current_user_id)
     conversations = get_chat_list(current_user_id)
     is_other_online = other_user_id in users_online
     secure_session = create_secure_session_if_not_exists(current_user_id, other_user_id)

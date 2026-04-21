@@ -1428,18 +1428,3 @@ body.chat-page {
 #user-status.offline {
   color: red;
 }
-.message-integrity {
-  display: block;
-  font-size: 11px;
-  margin-top: 4px;
-  opacity: 0.85;
-}
-
-.message-integrity.ok {
-  color: #1fa855;
-}
-
-.message-integrity.bad {
-  color: #c62828;
-  font-weight: 700;
-}

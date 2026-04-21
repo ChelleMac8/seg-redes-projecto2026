@@ -29,8 +29,7 @@ def save_uploaded_file(uploaded_file):
     file_type = get_file_type(original_name)
     return new_file_name, file_type
 
-
-def attach_integrity_status(messages):
+def attach_integrity_status(messages, current_user_id):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
@@ -39,21 +38,24 @@ def attach_integrity_status(messages):
                 msg["is_valid"] = False
                 msg["is_valid_sha3"] = False
 
-                # =====================================================
-                # 1. DECIFRAR A MENSAGEM COM O NOVO MODELO HÍBRIDO
-                # =====================================================
                 try:
-                    if (
-                        msg.get("mensagem_cifrada")
-                        and msg.get("chave_simetrica_cifrada")
-                        and msg.get("signature")
-                    ):
-                        # chave privada do destinatário
+                    # Caso 1: mensagem com texto cifrado
+                    if msg["sender_id"] == current_user_id:
+                        mensagem_cifrada = msg.get("mensagem_cifrada_sender")
+                        chave_simetrica_cifrada = msg.get("chave_simetrica_cifrada_sender")
+                        assinatura = msg.get("signature_sender")
+                    else:
+                        mensagem_cifrada = msg.get("mensagem_cifrada")
+                        chave_simetrica_cifrada = msg.get("chave_simetrica_cifrada")
+                        assinatura = msg.get("signature")
+
+                    if mensagem_cifrada and chave_simetrica_cifrada and assinatura:
+                        # chave privada do utilizador atual
                         cursor.execute(
                             "SELECT rsa_private_key FROM users WHERE id = %s",
-                            (msg["receiver_id"],)
+                            (current_user_id,)
                         )
-                        receiver = cursor.fetchone()
+                        current_user = cursor.fetchone()
 
                         # chave pública do remetente
                         cursor.execute(
@@ -62,36 +64,51 @@ def attach_integrity_status(messages):
                         )
                         sender = cursor.fetchone()
 
-                        if receiver and sender and receiver.get("rsa_private_key") and sender.get("rsa_public_key"):
+                        if (
+                            current_user
+                            and sender
+                            and current_user.get("rsa_private_key")
+                            and sender.get("rsa_public_key")
+                        ):
                             texto_decifrado = decifrar_mensagem_longa(
-                                private_key_pem_destinatario=receiver["rsa_private_key"],
+                                private_key_pem_destinatario=current_user["rsa_private_key"],
                                 public_key_pem_remetente=sender["rsa_public_key"],
-                                mensagem_cifrada_b64=msg["mensagem_cifrada"],
-                                chave_simetrica_cifrada_b64=msg["chave_simetrica_cifrada"],
-                                assinatura_b64=msg["signature"]
+                                mensagem_cifrada_b64=mensagem_cifrada,
+                                chave_simetrica_cifrada_b64=chave_simetrica_cifrada,
+                                assinatura_b64=assinatura
                             )
 
                             msg["message"] = texto_decifrado
                             msg["signature_valid"] = True
                         else:
-                            msg["message"] = "[CHAVES NÃO ENCONTRADAS]"
+                            msg["message"] = None
+                            msg["signature_valid"] = False
+
+                    # Caso 2: mensagem sem texto, mas com ficheiro/imagem
+                    elif msg.get("file_name"):
+                        msg["message"] = None
+                        msg["signature_valid"] = None
+                        msg["is_valid"] = None
+                        msg["is_valid_sha3"] = None
+
+                    # Caso 3: mensagem sem texto e sem ficheiro
                     else:
-                        # fallback: manter mensagem em claro se existir
                         if not msg.get("message"):
-                            msg["message"] = "[MENSAGEM INDISPONÍVEL]"
+                            msg["message"] = None
 
                 except Exception:
-                    msg["message"] = "[ERRO AO DECIFRAR]"
-                    msg["signature_valid"] = False
+                    # Se tiver ficheiro, não mostrar erro textual
+                    if msg.get("file_name"):
+                        msg["message"] = None
+                        msg["signature_valid"] = None
+                        msg["is_valid"] = None
+                        msg["is_valid_sha3"] = None
+                    else:
+                        msg["message"] = "[ERRO AO DECIFRAR]"
+                        msg["signature_valid"] = False
 
-                # =====================================================
-                # 2. VERIFICAR INTEGRIDADE DEPOIS DE DECIFRAR
-                # =====================================================
-                if msg.get("message") and msg["message"] not in [
-                    "[ERRO AO DECIFRAR]",
-                    "[CHAVES NÃO ENCONTRADAS]",
-                    "[MENSAGEM INDISPONÍVEL]"
-                ]:
+                # Verificar integridade apenas se houver texto real
+                if msg.get("message"):
                     msg["is_valid"] = verify_message_integrity(
                         msg.get("message"),
                         msg.get("message_hash")
