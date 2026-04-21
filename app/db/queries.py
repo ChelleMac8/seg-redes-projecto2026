@@ -3,6 +3,8 @@ from datetime import datetime
 from app.db.connection import get_db_connection
 from app.utils.user_utils import generate_user_hash
 from app.utils.hash_utils import generate_message_hash, generate_message_hash_sha3
+from app.services.crypto_utils import cifrar_mensagem
+from app.services.rsa_utils import cifrar_mensagem_longa
 
 from app.services.rsa_utils import (
     gerar_chaves_rsa,
@@ -263,7 +265,6 @@ def get_all_other_users_with_last_message(current_user_id):
     finally:
         connection.close()
 
-
 def get_messages_between_users(current_user_id, other_user_id):
     connection = get_db_connection()
     try:
@@ -275,9 +276,11 @@ def get_messages_between_users(current_user_id, other_user_id):
                     m.sender_id,
                     m.receiver_id,
                     m.message,
+                    m.mensagem_cifrada,
+                    m.chave_simetrica_cifrada,
+                    m.signature,
                     m.message_hash,
                     m.message_hash_sha3,
-                    m.signature,
                     m.file_name,
                     m.file_type,
                     m.created_at,
@@ -296,25 +299,57 @@ def get_messages_between_users(current_user_id, other_user_id):
     finally:
         connection.close()
 
-
 def insert_message_with_file(sender_id, receiver_id, message_text, file_name, file_type):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+
+            mensagem_cifrada = None
+            chave_simetrica_cifrada = None
+            signature = None
+
             message_hash = generate_message_hash(message_text) if message_text else None
             message_hash_sha3 = generate_message_hash_sha3(message_text) if message_text else None
 
-            cursor.execute("SELECT rsa_private_key FROM users WHERE id = %s", (sender_id,))
-            sender = cursor.fetchone()
+            # ================================
+            # NOVA CIFRAGEM (PGP STYLE)
+            # ================================
+            if message_text:
 
-            signature = None
-            if message_text and sender and sender.get("rsa_private_key"):
-                assinatura_bytes = assinar_rsa(
-                    sender["rsa_private_key"],
-                    message_text.encode("utf-8")
+                # 🔑 chave privada do remetente
+                cursor.execute(
+                    "SELECT rsa_private_key FROM users WHERE id = %s",
+                    (sender_id,)
                 )
-                signature = assinatura_bytes.hex()
+                sender = cursor.fetchone()
 
+                # 🔑 chave pública do destinatário
+                cursor.execute(
+                    "SELECT rsa_public_key FROM users WHERE id = %s",
+                    (receiver_id,)
+                )
+                receiver = cursor.fetchone()
+
+                if not sender or not sender.get("rsa_private_key"):
+                    raise ValueError("Chave privada do remetente não encontrada.")
+
+                if not receiver or not receiver.get("rsa_public_key"):
+                    raise ValueError("Chave pública do destinatário não encontrada.")
+
+                # 🔐 cifragem híbrida
+                payload = cifrar_mensagem_longa(
+                    public_key_pem_destinatario=receiver["rsa_public_key"],
+                    private_key_pem_remetente=sender["rsa_private_key"],
+                    texto=message_text
+                )
+
+                mensagem_cifrada = payload["mensagem_cifrada"]
+                chave_simetrica_cifrada = payload["chave_simetrica_cifrada"]
+                signature = payload["assinatura"]
+
+            # ================================
+            # GUARDAR NA BASE DE DADOS
+            # ================================
             cursor.execute(
                 """
                 INSERT INTO messages
@@ -322,31 +357,36 @@ def insert_message_with_file(sender_id, receiver_id, message_text, file_name, fi
                     sender_id,
                     receiver_id,
                     message,
+                    mensagem_cifrada,
+                    chave_simetrica_cifrada,
+                    signature,
                     message_hash,
                     message_hash_sha3,
-                    signature,
                     file_name,
                     file_type,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sender_id,
                     receiver_id,
-                    message_text if message_text else None,
+                    None,  # não guardar texto em claro
+                    mensagem_cifrada,
+                    chave_simetrica_cifrada,
+                    signature,
                     message_hash,
                     message_hash_sha3,
-                    signature,
                     file_name,
                     file_type,
                     datetime.now()
                 )
             )
+
         connection.commit()
+
     finally:
         connection.close()
-
 
 def get_secure_session(user1_id, user2_id):
     a, b = sorted([user1_id, user2_id])
